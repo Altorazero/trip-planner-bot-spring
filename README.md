@@ -1,6 +1,6 @@
 # Trip Planner Bot (Team №8)
-- Бот: https://t.me/TripPlannerBot_bot !!!
-- @TripPlannerBot_bot !!!
+
+- [Проверить бота](https://t.me/TripPlannerBot_bot).
 
 Telegram бот для планирования путешествий с административной панелью.
 ## API Endpoints
