@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        PATH = "/opt/homebrew/bin:/Users/monadayzek/miniconda3/bin:/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
+        JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
+    }
+
     options {
         buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '10'))
         disableConcurrentBuilds()
