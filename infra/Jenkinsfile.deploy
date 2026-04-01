@@ -1,7 +1,3 @@
-// deploy.job — копирует JAR, деплоит на VM через systemctl (без nohup)
-// Предусловие: на VM ручками установлен systemd-сервис tripplanner
-// Use: Pipeline script from SCM, Script Path: infra/Jenkinsfile.deploy
-
 pipeline {
     agent { label 'Salimli' }
 
@@ -11,8 +7,8 @@ pipeline {
     }
 
     parameters {
-        string(name: 'VM_IP', defaultValue: '', description: 'IP of VM (or leave empty to get from Heat stack)')
-        string(name: 'STACK_NAME', defaultValue: 'tripplanner-Salimli-vm', description: 'Heat stack name for IP lookup')
+        string(name: 'VM_IP', defaultValue: '', description: 'IP ВМ (или пусто — взять из terraform output instance_ip)')
+        string(name: 'TERRAFORM_DIR', defaultValue: 'infra/terraform', description: 'Каталог с terraform state для output instance_ip')
         string(name: 'SSH_USER', defaultValue: 'ubuntu', description: 'SSH user on VM (ubuntu for Ubuntu cloud images)')
         string(name: 'BUILD_JOB', defaultValue: 'job_salimli', description: 'Upstream build job that produces JAR (not deploy job!)')
         string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'jenkins-tp-vm', description: 'Jenkins credential ID for SSH to VM (ubuntu + private key)')
@@ -35,12 +31,11 @@ pipeline {
                     def ip = params.VM_IP?.trim()
                     if (!ip) {
                         ip = sh(script: """
-                            . /home/ubuntu/openrc.sh 2>/dev/null || true
-                            openstack stack output show ${params.STACK_NAME} instance_ip -f value -c output_value 2>/dev/null || true
+                            cd ${params.TERRAFORM_DIR} 2>/dev/null && terraform output -raw instance_ip 2>/dev/null || true
                         """, returnStdout: true).trim()
                     }
                     if (!ip) {
-                        error('VM_IP is empty and could not get from Heat stack. Set VM_IP parameter or run infra job first.')
+                        error('VM_IP пуст: задайте параметр или terraform apply в ${params.TERRAFORM_DIR}')
                     }
                     def jarGlob = 'TripPlannerBot/build/libs/*.jar'
                     def jarPath = sh(script: "ls ${jarGlob} | head -1", returnStdout: true).trim()

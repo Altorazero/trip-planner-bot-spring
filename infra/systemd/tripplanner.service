@@ -5,11 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tripplanner
+User=tripplanner    
 Group=tripplanner
 WorkingDirectory=/opt/tripplanner
 
-# Переменные из файла (TELEGRAM_BOT_TOKEN, SPRING_DATA_MONGODB_URI, etc.)
 EnvironmentFile=-/opt/tripplanner/env
 
 ExecStart=/usr/bin/java -Xmx512m -Dfile.encoding=UTF-8 -jar /opt/tripplanner/app.jar
@@ -23,7 +22,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=tripplanner
 
-# Защита: не перезапускать слишком часто
+# не перезапускать слишком часто
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

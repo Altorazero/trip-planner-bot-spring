@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'Salimli' }
+    agent any
 
     options {
         buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '10'))
@@ -7,52 +7,87 @@ pipeline {
     }
 
     parameters {
-        string(name: 'STACK_NAME', defaultValue: 'tripplanner-Salimli-vm', description: 'Heat stack name')
-        string(name: 'IMAGE', defaultValue: 'ununtu-22.04', description: 'Glance image')
-        string(name: 'FLAVOR', defaultValue: 'm1.small', description: 'Nova flavor')
-        string(name: 'KEY_NAME', defaultValue: 'Salimli', description: 'SSH key pair name')
-        string(name: 'NETWORK', defaultValue: 'sutdents-net', description: 'Network name or ID')
+        string(name: 'YC_FOLDER_ID',     defaultValue: 'b1gsm61k3iubf9hsonl6', description: 'ID каталога Yandex Cloud')
+        string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'ya-cloud-ssh',         description: 'Jenkins SSH credential (private key ya-cloud)')
+        string(name: 'SSH_PUBKEY_ID',     defaultValue: 'ya-cloud-ssh-pub',     description: 'Jenkins Secret text с публичным SSH-ключом')
+        string(name: 'YC_TOKEN_ID',       defaultValue: 'yc-oauth-token',       description: 'Jenkins Secret text с OAuth-токеном YC')
+        string(name: 'TG_TOKEN_ID',       defaultValue: 'telegram-bot-token',   description: 'Jenkins Secret text с токеном Telegram бота')
     }
 
     stages {
-        stage('Deploy Heat Stack') {
+
+        stage('Terraform — создание ВМ') {
             steps {
-                script {
-                    def exists = sh(returnStatus: true, script: """
-                        . /home/ubuntu/openrc.sh
-                        openstack stack show ${params.STACK_NAME} >/dev/null 2>&1
-                    """) == 0
-                    def cmd = exists ? 'update' : 'create'
-                    sh """
-                        . /home/ubuntu/openrc.sh
-                        openstack stack ${cmd} -t infra/heat/tripplanner-stack.yaml \
-                          --parameter image=${params.IMAGE} \
-                          --parameter flavor=${params.FLAVOR} \
-                          --parameter key_name=${params.KEY_NAME} \
-                          --parameter network=${params.NETWORK} \
-                          ${params.STACK_NAME}
-                    """
+                withCredentials([
+                    string(credentialsId: params.YC_TOKEN_ID,  variable: 'YC_TOKEN'),
+                    string(credentialsId: params.SSH_PUBKEY_ID, variable: 'SSH_PUB_KEY')
+                ]) {
+                    dir('infra/terraform') {
+                        sh '''
+                            terraform init -input=false
+                            terraform apply -auto-approve -input=false \
+                              -var="folder_id=${YC_FOLDER_ID}" \
+                              -var="ssh_public_key=${SSH_PUB_KEY}"
+                        '''
+                        script {
+                            env.VM_IP = sh(script: 'terraform output -raw instance_ip', returnStdout: true).trim()
+                        }
+                    }
+                }
+                echo "VM IP: ${env.VM_IP}"
+            }
+        }
+
+        stage('Ansible — установка зависимостей') {
+            steps {
+                withCredentials([
+                    string(credentialsId: params.TG_TOKEN_ID, variable: 'TG_TOKEN')
+                ]) {
+                    sshagent(credentials: [params.SSH_CREDENTIAL_ID]) {
+                        dir('infra/terraform') {
+                            sh """
+                                ansible-playbook -i '${env.VM_IP},' \
+                                  -u ubuntu \
+                                  --ssh-extra-args='-o StrictHostKeyChecking=no' \
+                                  ansible/playbook.yml \
+                                  -e telegram_bot_token=\$TG_TOKEN
+                            """
+                        }
+                    }
                 }
             }
         }
-        stage('Wait for Stack') {
+
+        stage('Build JAR') {
             steps {
-                sh """
-                    . /home/ubuntu/openrc.sh
-                    openstack stack show ${params.STACK_NAME} -f json
-                """
-                sh """
-                    . /home/ubuntu/openrc.sh
-                    until openstack stack show ${params.STACK_NAME} -f value -c stack_status 2>/dev/null | grep -qE 'CREATE_COMPLETE|UPDATE_COMPLETE'; do
-                      sleep 10
-                    done || true
-                """
+                dir('TripPlannerBot') {
+                    sh 'chmod +x gradlew'
+                    sh './gradlew clean shadowJar --no-daemon'
+                }
+            }
+        }
+
+        stage('Deploy JAR на ВМ') {
+            steps {
+                sshagent(credentials: [params.SSH_CREDENTIAL_ID]) {
+                    script {
+                        def jarPath = sh(script: 'ls TripPlannerBot/build/libs/*.jar | head -1', returnStdout: true).trim()
+                        sh """
+                            scp -o StrictHostKeyChecking=no ${jarPath} ubuntu@${env.VM_IP}:/tmp/app.jar
+                            ssh -o StrictHostKeyChecking=no ubuntu@${env.VM_IP} \
+                              'sudo mv /tmp/app.jar /opt/tripplanner/app.jar && \
+                               sudo chown tripplanner:tripplanner /opt/tripplanner/app.jar && \
+                               sudo systemctl restart tripplanner'
+                        """
+                    }
+                }
             }
         }
     }
+
     post {
         always {
-            archiveArtifacts artifacts: 'heat/*.yaml', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'TripPlannerBot/build/libs/*.jar', fingerprint: true, allowEmptyArchive: true
         }
     }
 }
