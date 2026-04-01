@@ -10,7 +10,7 @@ pipeline {
         string(name: 'YC_FOLDER_ID',     defaultValue: 'b1gsm61k3iubf9hsonl6', description: 'ID каталога Yandex Cloud')
         string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'ya-cloud-ssh',         description: 'Jenkins SSH credential (private key ya-cloud)')
         string(name: 'SSH_PUBKEY_ID',     defaultValue: 'ya-cloud-ssh-pub',     description: 'Jenkins Secret text с публичным SSH-ключом')
-        string(name: 'YC_TOKEN_ID',       defaultValue: 'yc-oauth-token',       description: 'Jenkins Secret text с OAuth-токеном YC')
+        string(name: 'YC_TOKEN_ID',       defaultValue: 'yandex-oauth',         description: 'Jenkins Secret text с OAuth-токеном YC')
         string(name: 'TG_TOKEN_ID',       defaultValue: 'telegram-bot-token',   description: 'Jenkins Secret text с токеном Telegram бота')
     }
 
