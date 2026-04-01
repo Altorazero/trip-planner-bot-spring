@@ -13,7 +13,7 @@ pipeline {
 
     parameters {
         string(name: 'YC_FOLDER_ID',     defaultValue: 'b1gsm61k3iubf9hsonl6', description: 'ID каталога Yandex Cloud')
-        string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'ya-cloud-ssh',         description: 'Jenkins SSH credential (private key ya-cloud)')
+        string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'ya-cloud-ssh',         description: 'Jenkins SSH credential')
         string(name: 'SSH_PUBKEY_ID',     defaultValue: 'ya-cloud-ssh-pub',     description: 'Jenkins Secret text с публичным SSH-ключом')
         string(name: 'YC_TOKEN_ID',       defaultValue: 'yandex-oauth',         description: 'Jenkins Secret text с OAuth-токеном YC')
         string(name: 'TG_TOKEN_ID',       defaultValue: 'telegram-bot-token',   description: 'Jenkins Secret text с токеном Telegram бота')
@@ -21,7 +21,7 @@ pipeline {
 
     stages {
 
-        stage('Terraform — создание ВМ') {
+        stage('Terraform') {
             steps {
                 withCredentials([
                     string(credentialsId: params.YC_TOKEN_ID,  variable: 'YC_TOKEN'),
@@ -43,21 +43,22 @@ pipeline {
             }
         }
 
-        stage('Ansible — установка зависимостей') {
+        stage('Ansible') {
             steps {
                 withCredentials([
+                    sshUserPrivateKey(credentialsId: params.SSH_CREDENTIAL_ID, keyFileVariable: 'SSH_KEY'),
                     string(credentialsId: params.TG_TOKEN_ID, variable: 'TG_TOKEN')
                 ]) {
-                    sshagent(credentials: [params.SSH_CREDENTIAL_ID]) {
-                        dir('infra/terraform') {
-                            sh """
-                                ansible-playbook -i '${env.VM_IP},' \
-                                  -u ubuntu \
-                                  --ssh-extra-args='-o StrictHostKeyChecking=no' \
-                                  ansible/playbook.yml \
-                                  -e telegram_bot_token=\$TG_TOKEN
-                            """
-                        }
+                    dir('infra/terraform') {
+                        sh """
+                            sleep 30
+                            ansible-playbook -i '${env.VM_IP},' \
+                              -u ubuntu \
+                              --private-key=\$SSH_KEY \
+                              --ssh-extra-args='-o StrictHostKeyChecking=no' \
+                              ansible/playbook.yml \
+                              -e telegram_bot_token=\$TG_TOKEN
+                        """
                     }
                 }
             }
@@ -72,14 +73,16 @@ pipeline {
             }
         }
 
-        stage('Deploy JAR на ВМ') {
+        stage('Deploy JAR') {
             steps {
-                sshagent(credentials: [params.SSH_CREDENTIAL_ID]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: params.SSH_CREDENTIAL_ID, keyFileVariable: 'SSH_KEY')
+                ]) {
                     script {
                         def jarPath = sh(script: 'ls TripPlannerBot/build/libs/*.jar | head -1', returnStdout: true).trim()
                         sh """
-                            scp -o StrictHostKeyChecking=no ${jarPath} ubuntu@${env.VM_IP}:/tmp/app.jar
-                            ssh -o StrictHostKeyChecking=no ubuntu@${env.VM_IP} \
+                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no ${jarPath} ubuntu@${env.VM_IP}:/tmp/app.jar
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@${env.VM_IP} \
                               'sudo mv /tmp/app.jar /opt/tripplanner/app.jar && \
                                sudo chown tripplanner:tripplanner /opt/tripplanner/app.jar && \
                                sudo systemctl restart tripplanner'
