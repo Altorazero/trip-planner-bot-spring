@@ -16,8 +16,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: PLACEHOLDER_IMAGE
-          imagePullPolicy: Never
+          image: __APP_IMAGE__
+          imagePullPolicy: __IMAGE_PULL_POLICY__
           ports:
             - containerPort: 8080
           envFrom:
