@@ -129,6 +129,7 @@ docker save "$DOCKER_IMAGE" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o U
                 ]) {
                     sh """#!/usr/bin/env bash
 set -euo pipefail
+export K8S_NAMESPACE="${params.K8S_NAMESPACE}"
 rsh() { ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "\$@"; }
 
 rsh kubectl get namespace "\$K8S_NAMESPACE" >/dev/null 2>&1 || rsh kubectl create namespace "\$K8S_NAMESPACE"
@@ -162,22 +163,23 @@ rsh kubectl -n "\$K8S_NAMESPACE" rollout status deployment/tripplanner --timeout
                     string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
                     sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
                 ]) {
-                    sh '''#!/usr/bin/env bash
+                    sh """#!/usr/bin/env bash
 set -euo pipefail
-rsh() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${SSH_USER}@${K8S_NODE_HOST}" "$@"; }
+export K8S_NAMESPACE="${params.K8S_NAMESPACE}"
+rsh() { ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "\$@"; }
 
-NS="$K8S_NAMESPACE"
-rsh kubectl -n "$NS" delete deployment tripplanner --ignore-not-found=true
-rsh kubectl -n "$NS" delete service tripplanner --ignore-not-found=true
-rsh kubectl -n "$NS" delete deployment mongo --ignore-not-found=true
-rsh kubectl -n "$NS" delete service mongo --ignore-not-found=true
-rsh kubectl -n "$NS" delete pvc mongo-data --ignore-not-found=true
-rsh kubectl -n "$NS" delete secret tripplanner-secrets --ignore-not-found=true
+NS="\$K8S_NAMESPACE"
+rsh kubectl -n "\$NS" delete deployment tripplanner --ignore-not-found=true
+rsh kubectl -n "\$NS" delete service tripplanner --ignore-not-found=true
+rsh kubectl -n "\$NS" delete deployment mongo --ignore-not-found=true
+rsh kubectl -n "\$NS" delete service mongo --ignore-not-found=true
+rsh kubectl -n "\$NS" delete pvc mongo-data --ignore-not-found=true
+rsh kubectl -n "\$NS" delete secret tripplanner-secrets --ignore-not-found=true
 
-if [ "${DELETE_NAMESPACE}" = "true" ]; then
-  rsh kubectl delete namespace "$NS" --ignore-not-found=true
+if [ "${params.DELETE_NAMESPACE}" = "true" ]; then
+  rsh kubectl delete namespace "\$NS" --ignore-not-found=true
 fi
-'''
+"""
                 }
             }
         }
