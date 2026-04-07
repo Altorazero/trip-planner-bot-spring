@@ -4,15 +4,12 @@ pipeline {
     environment {
         PATH = "/opt/homebrew/bin:/Users/monadayzek/miniconda3/bin:/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
         JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
+        DOCKER_CONTEXT = 'default'
     }
 
     options {
         buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '10'))
         disableConcurrentBuilds()
-    }
-
-    parameters {
-        string(name: 'IMAGE_REGISTRY', defaultValue: '', description: 'tripplanner')
     }
 
     stages {
@@ -25,45 +22,41 @@ pipeline {
             }
         }
 
-        stage('Docker build & push') {
+        stage('Build image and load on node') {
             steps {
                 script {
-                    if (!params.IMAGE_REGISTRY?.trim()) {
-                        error('IMAGE_REGISTRY')
-                    }
-                    env.FULL_IMAGE = "${params.IMAGE_REGISTRY.trim()}/tripplanner:${env.BUILD_NUMBER}"
+                    env.FULL_IMAGE = "docker.io/library/tripplanner:${env.BUILD_NUMBER}"
                 }
                 dir('TripPlannerBot') {
                     sh "docker build -t ${env.FULL_IMAGE} ."
-                    sh "docker push ${env.FULL_IMAGE}"
+                }
+                withCredentials([
+                    string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
+                    sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+                ]) {
+                    sh '''#!/bin/bash
+set -eu
+docker save "$FULL_IMAGE" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  "${SSH_USER}@${K8S_NODE_HOST}" "sudo k3s ctr images import -"
+'''
                 }
             }
         }
 
-        stage('Apply tripplanner secret') {
+        stage('Apply manifests') {
             steps {
                 withCredentials([
                     file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
                     string(credentialsId: 'telegram-bot-token', variable: 'TG_TOKEN'),
                     string(credentialsId: 'mongo-uri-k8s', variable: 'MONGO_URI')
                 ]) {
-                    sh '''
-                        export KUBECONFIG="$KUBECONFIG"
-                        kubectl create secret generic tripplanner-secrets \
-                          --from-literal=TELEGRAM_BOT_TOKEN="$TG_TOKEN" \
-                          --from-literal=SPRING_DATA_MONGODB_URI="$MONGO_URI" \
-                          --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \
-                          --dry-run=client -o yaml | kubectl apply -f -
-                    '''
-                }
-            }
-        }
-
-        stage('Apply k8s') {
-            steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     sh """
                         export KUBECONFIG="\$KUBECONFIG"
+                        kubectl create secret generic tripplanner-secrets \
+                          --from-literal=TELEGRAM_BOT_TOKEN="\$TG_TOKEN" \
+                          --from-literal=SPRING_DATA_MONGODB_URI="\$MONGO_URI" \
+                          --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \
+                          --dry-run=client -o yaml | kubectl apply -f -
                         kubectl apply -f infra/kubernetes/mongo.yaml
                         kubectl apply -f infra/kubernetes/tripplanner-service.yaml
                         sed "s|PLACEHOLDER_IMAGE|${env.FULL_IMAGE}|g" infra/kubernetes/tripplanner-deployment.yaml | kubectl apply -f -

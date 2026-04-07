@@ -1,3 +1,4 @@
+# 10Gi; на k3s подставится default StorageClass (обычно local-path). В Yandex Managed K8s верни storageClassName: network-hdd.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
