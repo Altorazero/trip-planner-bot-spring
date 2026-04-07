@@ -10,6 +10,9 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
 
         K8S_NAMESPACE = 'tripplanner'
+
+        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
+        DOCKER_HOST = "unix://${env.HOME}/.colima/default/docker.sock"
     }
 
     stages {
