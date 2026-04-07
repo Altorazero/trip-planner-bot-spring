@@ -4,7 +4,6 @@ pipeline {
     environment {
         TELEGRAM_TOKEN = credentials('telegram-bot-token')
         MONGO_URI = credentials('mongo-uri-k8s')
-        KUBECONFIG_CRED = credentials('kubeconfig')
 
         DOCKER_IMAGE = 'docker.io/flugmaschine/tripplanner'
         IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
@@ -24,7 +23,7 @@ pipeline {
                     sh 'chmod +x gradlew && ./gradlew clean shadowJar --no-daemon'
                     sh '''
                         export DOCKER_BUILDKIT=1
-                        docker build --platform linux/amd64 \
+                        docker buildx build --platform linux/amd64 --load \
                           -t ${DOCKER_IMAGE}:${IMAGE_TAG} \
                           -t ${DOCKER_IMAGE}:latest \
                           .
@@ -61,8 +60,9 @@ pipeline {
 
                 sh 'rm -rf k8s && cp -r infra/kubernetes k8s'
 
-                withEnv(["KUBECONFIG=${env.KUBECONFIG_CRED}"]) {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     sh 'kubectl apply -f k8s/namespace.yaml'
+                    sh "kubectl apply -f k8s/mongo.yaml -n ${env.K8S_NAMESPACE}"
 
                     sh """
                         kubectl create secret generic tripplanner-secrets \\
@@ -86,9 +86,10 @@ pipeline {
 
         stage('Verify') {
             steps {
-                withEnv(["KUBECONFIG=${env.KUBECONFIG_CRED}"]) {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     sh """
-                        kubectl rollout status deployment/tripplanner -n ${env.K8S_NAMESPACE} --timeout=180s
+                        kubectl rollout status deployment/mongo -n ${env.K8S_NAMESPACE} --timeout=600s
+                        kubectl rollout status deployment/tripplanner -n ${env.K8S_NAMESPACE} --timeout=300s
                         kubectl get pods -n ${env.K8S_NAMESPACE} -o wide
                         kubectl get svc -n ${env.K8S_NAMESPACE}
                     """
