@@ -1,0 +1,101 @@
+pipeline {
+    agent any
+
+    environment {
+        PATH = "/opt/homebrew/bin:/Users/monadayzek/miniconda3/bin:/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
+        JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
+    }
+
+    options {
+        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'IMAGE_REGISTRY', defaultValue: '', description: 'Реестр')
+        string(name: 'KUBECONFIG_CREDENTIAL_ID', defaultValue: 'kubeconfig', description: 'Jenkins Secret file: kubeconfig кластера на ВМ')
+        string(name: 'DOCKER_REGISTRY_CREDENTIAL_ID', defaultValue: '', description: 'Jenkins Username/Password')
+        booleanParam(name: 'SYNC_K8S_SECRET_FROM_JENKINS', defaultValue: false, description: 'Создать/обновить tripplanner-secrets из Jenkins')
+        string(name: 'TG_TOKEN_CREDENTIAL_ID', defaultValue: 'telegram-bot-token', description: 'TELEGRAM_BOT_TOKEN')
+        string(name: 'MONGO_URI_CREDENTIAL_ID', defaultValue: '', description: 'Secret SPRING_DATA_MONGODB_URI')
+    }
+
+    stages {
+        stage('Build JAR') {
+            steps {
+                dir('TripPlannerBot') {
+                    sh 'chmod +x gradlew'
+                    sh './gradlew clean shadowJar --no-daemon'
+                }
+            }
+        }
+
+        stage('Docker build & push') {
+            steps {
+                script {
+                    if (!params.IMAGE_REGISTRY?.trim()) {
+                        error('Заполни IMAGE_REGISTRY (куда пушить образ)')
+                    }
+                    env.FULL_IMAGE = "${params.IMAGE_REGISTRY.trim()}/tripplanner:${env.BUILD_NUMBER}"
+                }
+                dir('TripPlannerBot') {
+                    script {
+                        def regId = params.DOCKER_REGISTRY_CREDENTIAL_ID?.trim()
+                        if (regId) {
+                            withCredentials([usernamePassword(credentialsId: regId, usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
+                                sh '''
+                                    REG_HOST=$(echo "$FULL_IMAGE" | cut -d/ -f1)
+                                    echo "$REG_PASS" | docker login -u "$REG_USER" --password-stdin "$REG_HOST"
+                                '''
+                            }
+                        }
+                    }
+                    sh "docker build -t ${env.FULL_IMAGE} ."
+                    sh "docker push ${env.FULL_IMAGE}"
+                }
+            }
+        }
+
+        stage('Sync k8s secret') {
+            when {
+                expression { return params.SYNC_K8S_SECRET_FROM_JENKINS }
+            }
+            steps {
+                script {
+                    if (!params.MONGO_URI_CREDENTIAL_ID?.trim()) {
+                        error('SYNC_K8S_SECRET_FROM_JENKINS: заполни MONGO_URI_CREDENTIAL_ID')
+                    }
+                }
+                withCredentials([file(credentialsId: params.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')]) {
+                    withCredentials([
+                        string(credentialsId: params.TG_TOKEN_CREDENTIAL_ID, variable: 'TG_TOKEN'),
+                        string(credentialsId: params.MONGO_URI_CREDENTIAL_ID.trim(), variable: 'MONGO_URI')
+                    ]) {
+                        sh '''
+                            export KUBECONFIG="$KUBECONFIG"
+                            kubectl create secret generic tripplanner-secrets \
+                              --from-literal=TELEGRAM_BOT_TOKEN="$TG_TOKEN" \
+                              --from-literal=SPRING_DATA_MONGODB_URI="$MONGO_URI" \
+                              --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \
+                              --dry-run=client -o yaml | kubectl apply -f -
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Apply k8s') {
+            steps {
+                withCredentials([file(credentialsId: params.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')]) {
+                    sh """
+                        export KUBECONFIG="\$KUBECONFIG"
+                        kubectl apply -f infra/kubernetes/mongo.yaml
+                        kubectl apply -f infra/kubernetes/tripplanner-service.yaml
+                        sed "s|PLACEHOLDER_IMAGE|${env.FULL_IMAGE}|g" infra/kubernetes/tripplanner-deployment.yaml | kubectl apply -f -
+                        kubectl rollout status deployment/tripplanner --timeout=300s
+                    """
+                }
+            }
+        }
+    }
+}
