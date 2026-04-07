@@ -130,7 +130,7 @@ docker save "$DOCKER_IMAGE" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o U
                     sh """#!/usr/bin/env bash
 set -euo pipefail
 export K8S_NAMESPACE="${params.K8S_NAMESPACE}"
-rsh() { ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "\$@"; }
+rsh() { shift; ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "sudo k3s kubectl \$(printf '%q ' "\$@")"; }
 
 rsh kubectl get namespace "\$K8S_NAMESPACE" >/dev/null 2>&1 || rsh kubectl create namespace "\$K8S_NAMESPACE"
 
@@ -166,7 +166,7 @@ rsh kubectl -n "\$K8S_NAMESPACE" rollout status deployment/tripplanner --timeout
                     sh """#!/usr/bin/env bash
 set -euo pipefail
 export K8S_NAMESPACE="${params.K8S_NAMESPACE}"
-rsh() { ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "\$@"; }
+rsh() { shift; ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "sudo k3s kubectl \$(printf '%q ' "\$@")"; }
 
 NS="\$K8S_NAMESPACE"
 rsh kubectl -n "\$NS" delete deployment tripplanner --ignore-not-found=true
