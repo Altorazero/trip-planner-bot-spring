@@ -23,7 +23,8 @@ pipeline {
                 dir('TripPlannerBot') {
                     sh 'chmod +x gradlew && ./gradlew clean shadowJar --no-daemon'
                     sh '''
-                        docker buildx build --platform linux/amd64 --load \
+                        export DOCKER_BUILDKIT=1
+                        docker build --platform linux/amd64 \
                           -t ${DOCKER_IMAGE}:${IMAGE_TAG} \
                           -t ${DOCKER_IMAGE}:latest \
                           .
