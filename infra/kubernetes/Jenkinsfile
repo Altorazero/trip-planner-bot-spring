@@ -1,69 +1,191 @@
 pipeline {
     agent any
 
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+    }
+
+    parameters {
+        choice(name: 'K8S_ACTION', choices: ['deploy', 'delete'], description: '')
+        booleanParam(name: 'RUN_BUILD', defaultValue: true, description: '')
+        booleanParam(name: 'PUSH_IMAGE', defaultValue: false, description: '')
+        string(name: 'IMAGE_REPOSITORY', defaultValue: 'docker.io/library/tripplanner', description: '')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: '')
+        string(name: 'K8S_NAMESPACE', defaultValue: 'tripplanner', description: '')
+        booleanParam(name: 'DELETE_NAMESPACE', defaultValue: false, description: '')
+    }
+
     environment {
+        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+        K8S_DIR = "${WORKSPACE}/infra/kubernetes"
+        K8S_RENDER = "${WORKSPACE}/infra/kubernetes/.rendered"
         PATH = "/opt/homebrew/bin:/Users/monadayzek/miniconda3/bin:/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
         JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
         DOCKER_HOST = "unix://${env.HOME}/.colima/default/docker.sock"
     }
 
-    options {
-        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '10'))
-        disableConcurrentBuilds()
-    }
-
     stages {
-        stage('Build JAR') {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            when {
+                allOf {
+                    expression { params.K8S_ACTION == 'deploy' }
+                    expression { return params.RUN_BUILD }
+                }
+            }
             steps {
                 dir('TripPlannerBot') {
-                    sh 'chmod +x gradlew'
-                    sh './gradlew clean shadowJar --no-daemon'
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+chmod +x gradlew
+./gradlew clean shadowJar --no-daemon
+'''
                 }
             }
         }
 
-        stage('Build image and load on node') {
+        stage('Build Docker Image') {
+            when {
+                expression { params.K8S_ACTION == 'deploy' }
+            }
             steps {
                 script {
-                    env.FULL_IMAGE = "docker.io/library/tripplanner:${env.BUILD_NUMBER}"
+                    def tag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "build-${env.BUILD_NUMBER}"
+                    env.DOCKER_IMAGE = "${params.IMAGE_REPOSITORY.trim()}:${tag}"
+                    env.IMAGE_PULL_POLICY = params.PUSH_IMAGE ? 'Always' : 'Never'
                 }
                 dir('TripPlannerBot') {
-                    sh "docker build -t ${env.FULL_IMAGE} ."
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+JAR=$(echo build/libs/*.jar)
+if [ ! -f "$JAR" ]; then
+  echo "No JAR in build/libs. Enable RUN_BUILD or build locally."
+  exit 1
+fi
+docker build -t "$DOCKER_IMAGE" .
+'''
                 }
+            }
+        }
+
+        stage('Push Docker Image') {
+            when {
+                allOf {
+                    expression { params.K8S_ACTION == 'deploy' }
+                    expression { return params.PUSH_IMAGE }
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker_registry', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+REGISTRY="$(echo "$DOCKER_IMAGE" | awk -F/ '{if (NF>1 && $1 ~ /[.:]/) print $1; else print "docker.io"}')"
+echo "$DOCKER_PASS" | docker login "$REGISTRY" -u "$DOCKER_USER" --password-stdin
+docker push "$DOCKER_IMAGE"
+docker logout "$REGISTRY" || true
+'''
+                }
+            }
+        }
+
+        stage('Load image on VM') {
+            when {
+                allOf {
+                    expression { params.K8S_ACTION == 'deploy' }
+                    expression { return !params.PUSH_IMAGE }
+                }
+            }
+            steps {
                 withCredentials([
                     string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
                     sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
                 ]) {
-                    sh '''#!/bin/bash
-set -eu
-docker save "$FULL_IMAGE" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+docker save "$DOCKER_IMAGE" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "${SSH_USER}@${K8S_NODE_HOST}" "sudo k3s ctr images import -"
 '''
                 }
             }
         }
 
-        stage('Apply manifests') {
+        stage('Deploy To Kubernetes') {
+            when {
+                expression { params.K8S_ACTION == 'deploy' }
+            }
             steps {
                 withCredentials([
-                    file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                    string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
+                    sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
                     string(credentialsId: 'telegram-bot-token', variable: 'TG_TOKEN'),
                     string(credentialsId: 'mongo-uri-k8s', variable: 'MONGO_URI')
                 ]) {
-                    sh """
-                        export KUBECONFIG="\$KUBECONFIG"
-                        kubectl create secret generic tripplanner-secrets \
-                          --from-literal=TELEGRAM_BOT_TOKEN="\$TG_TOKEN" \
-                          --from-literal=SPRING_DATA_MONGODB_URI="\$MONGO_URI" \
-                          --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \
-                          --dry-run=client -o yaml | kubectl apply -f -
-                        kubectl apply -f infra/kubernetes/mongo.yaml
-                        kubectl apply -f infra/kubernetes/tripplanner-service.yaml
-                        sed "s|PLACEHOLDER_IMAGE|${env.FULL_IMAGE}|g" infra/kubernetes/tripplanner-deployment.yaml | kubectl apply -f -
-                        kubectl rollout status deployment/tripplanner --timeout=300s
-                    """
+                    sh """#!/usr/bin/env bash
+set -euo pipefail
+rsh() { ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "\${SSH_USER}@\${K8S_NODE_HOST}" "\$@"; }
+
+rsh kubectl get namespace "\$K8S_NAMESPACE" >/dev/null 2>&1 || rsh kubectl create namespace "\$K8S_NAMESPACE"
+
+kubectl create secret generic tripplanner-secrets \\
+  --from-literal=TELEGRAM_BOT_TOKEN="\$TG_TOKEN" \\
+  --from-literal=SPRING_DATA_MONGODB_URI="\$MONGO_URI" \\
+  --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \\
+  --dry-run=client -o yaml | rsh kubectl -n "\$K8S_NAMESPACE" apply -f -
+
+cat "\$K8S_DIR/mongo.yaml" | rsh kubectl -n "\$K8S_NAMESPACE" apply -f -
+cat "\$K8S_DIR/tripplanner-service.yaml" | rsh kubectl -n "\$K8S_NAMESPACE" apply -f -
+
+mkdir -p "\$K8S_RENDER"
+sed -e "s|__APP_IMAGE__|${env.DOCKER_IMAGE}|g" \\
+    -e "s|__IMAGE_PULL_POLICY__|${env.IMAGE_PULL_POLICY}|g" \\
+    "\$K8S_DIR/tripplanner-deployment.yaml" | rsh kubectl -n "\$K8S_NAMESPACE" apply -f -
+
+rsh kubectl -n "\$K8S_NAMESPACE" rollout status deployment/tripplanner --timeout=300s
+"""
                 }
             }
+        }
+
+        stage('Delete Kubernetes Resources') {
+            when {
+                expression { params.K8S_ACTION == 'delete' }
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
+                    sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+                ]) {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+rsh() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${SSH_USER}@${K8S_NODE_HOST}" "$@"; }
+
+NS="$K8S_NAMESPACE"
+rsh kubectl -n "$NS" delete deployment tripplanner --ignore-not-found=true
+rsh kubectl -n "$NS" delete service tripplanner --ignore-not-found=true
+rsh kubectl -n "$NS" delete deployment mongo --ignore-not-found=true
+rsh kubectl -n "$NS" delete service mongo --ignore-not-found=true
+rsh kubectl -n "$NS" delete pvc mongo-data --ignore-not-found=true
+rsh kubectl -n "$NS" delete secret tripplanner-secrets --ignore-not-found=true
+
+if [ "${DELETE_NAMESPACE}" = "true" ]; then
+  rsh kubectl delete namespace "$NS" --ignore-not-found=true
+fi
+'''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'TripPlannerBot/build/libs/*.jar, infra/kubernetes/.rendered/*.yaml', allowEmptyArchive: true, fingerprint: true
         }
     }
 }
