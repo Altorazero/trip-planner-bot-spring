@@ -7,21 +7,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.tripplanner.domain.Trip;
-import org.tripplanner.repositories.mongodb.TripDAOImpl;
-
 import reactor.core.publisher.Mono;
 
 @Component
 public class PlannedTripsController {
 
     private final PlannedTripsService service;
-    private final TripDAOImpl tripDAO;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final Logger logger = LoggerFactory.getLogger(PlannedTripsController.class);
 
-    public PlannedTripsController(PlannedTripsService service, TripDAOImpl tripDAO) {
+    public PlannedTripsController(PlannedTripsService service) {
         this.service = service;
-        this.tripDAO = tripDAO;
     }
 
     public Mono<String> handleStartCommand(Long chatId) {
@@ -80,7 +76,8 @@ public class PlannedTripsController {
                 return Mono.just("Дата начала не может быть позже даты окончания");
             }
 
-            return tripDAO.createTrip(chatId, name, start, end)
+            return service.registerUserIfNeeded(chatId)
+                    .then(service.planTrip(chatId, name, start, end))
                     .map(trip -> "Поездка успешно создана!")
                     .onErrorResume(e -> Mono.just("Ошибка при создании поездки: " + e.getMessage()));
         } catch (Exception e) {
