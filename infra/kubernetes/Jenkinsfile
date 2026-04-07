@@ -2,128 +2,97 @@ pipeline {
     agent any
 
     options {
-        timestamps()
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '15'))
-    }
-
-    parameters {
-        booleanParam(name: 'RUN_BUILD', defaultValue: true, description: 'Gradle shadowJar')
-        string(name: 'IMAGE_REPOSITORY', defaultValue: 'docker.io/library/tripplanner', description: 'image name')
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'build-NUMBER')
-        string(name: 'K8S_NAMESPACE', defaultValue: 'tripplanner', description: 'namespace')
+        ansiColor('xterm')
     }
 
     environment {
-        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
-        K8S_DIR = "${WORKSPACE}/infra/kubernetes"
-        K8S_RENDER = "${WORKSPACE}/infra/kubernetes/.rendered"
-        PATH = "/opt/homebrew/bin:/Users/monadayzek/miniconda3/bin:/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
-        JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
-        DOCKER_HOST = "unix://${env.HOME}/.colima/default/docker.sock"
+        TELEGRAM_TOKEN = credentials('telegram-bot-token')
+        MONGO_URI = credentials('mongo-uri-k8s')
+        KUBECONFIG_CRED = credentials('kubeconfig')
+
+        DOCKER_IMAGE = 'docker.io/flugmaschine/tripplanner'
+        IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
+
+        K8S_NAMESPACE = 'tripplanner'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Build') {
             steps {
                 checkout scm
-            }
-        }
 
-        stage('Build JAR') {
-            when {
-                expression { return params.RUN_BUILD }
-            }
-            steps {
                 dir('TripPlannerBot') {
-                    sh '''#!/usr/bin/env bash
-set -euo pipefail
-chmod +x gradlew
-./gradlew clean shadowJar --no-daemon
-'''
+                    sh 'chmod +x gradlew && ./gradlew clean shadowJar --no-daemon'
+                    sh '''
+                        docker build --platform linux/amd64 \
+                          -t ${DOCKER_IMAGE}:${IMAGE_TAG} \
+                          -t ${DOCKER_IMAGE}:latest .
+                    '''
                 }
             }
         }
 
-        stage('Docker image') {
+        stage('Push') {
             steps {
-                script {
-                    def tag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "build-${env.BUILD_NUMBER}"
-                    env.DOCKER_IMAGE = "${params.IMAGE_REPOSITORY.trim()}:${tag}"
-                    env.IMAGE_PULL_POLICY = 'Never'
-                }
-                dir('TripPlannerBot') {
-                    sh '''#!/usr/bin/env bash
-set -euo pipefail
-JAR=$(echo build/libs/*.jar)
-if [ ! -f "$JAR" ]; then
-  echo "RUN_BUILD"
-  exit 1
-fi
-docker build -t "$DOCKER_IMAGE" .
-'''
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-hub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                    '''
                 }
             }
         }
 
-        stage('Load image on VM') {
+        stage('Deploy') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
-                    sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
-                ]) {
-                    sh '''#!/usr/bin/env bash
-set -euo pipefail
-SSH_OPTS=(
-  -i "$SSH_KEY"
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
-  -o ServerAliveInterval=30
-  -o ServerAliveCountMax=120
-)
-docker save "$DOCKER_IMAGE" | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" "sudo k3s ctr images import -"
-'''
+                sh '''
+                    if ! command -v kubectl &> /dev/null; then
+                        ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+                        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
+                        chmod +x kubectl && mv kubectl /usr/local/bin/
+                    fi
+                '''
+
+                sh 'rm -rf k8s && cp -r infra/kubernetes k8s'
+
+                withEnv(["KUBECONFIG=${env.KUBECONFIG_CRED}"]) {
+                    sh 'kubectl apply -f k8s/namespace.yaml'
+
+                    sh """
+                        kubectl create secret generic tripplanner-secrets \\
+                            --namespace=${env.K8S_NAMESPACE} \\
+                            --from-literal=TELEGRAM_BOT_TOKEN=\${TELEGRAM_TOKEN} \\
+                            --from-literal=SPRING_DATA_MONGODB_URI=\${MONGO_URI} \\
+                            --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \\
+                            --dry-run=client -o yaml | kubectl apply -f -
+                    """
+
+                    sh "kubectl apply -f k8s/tripplanner-service.yaml -n ${env.K8S_NAMESPACE}"
+                    sh """
+                        sed -e 's|__APP_IMAGE__|${env.DOCKER_IMAGE}:${env.IMAGE_TAG}|g' \\
+                            -e 's|__IMAGE_PULL_POLICY__|Always|g' \\
+                            k8s/tripplanner-deployment.yaml > k8s/tripplanner-deployment.rendered.yaml
+                        kubectl apply -f k8s/tripplanner-deployment.rendered.yaml -n ${env.K8S_NAMESPACE}
+                    """
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Verify') {
             steps {
-                withCredentials([
-                    file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
-                    string(credentialsId: 'telegram-bot-token', variable: 'TG_TOKEN'),
-                    string(credentialsId: 'mongo-uri-k8s', variable: 'MONGO_URI')
-                ]) {
-                    sh """#!/usr/bin/env bash
-set -euo pipefail
-export KUBECONFIG="\${KUBECONFIG}"
-NS="${params.K8S_NAMESPACE}"
-
-kubectl create secret generic tripplanner-secrets \\
-  --namespace "\$NS" \\
-  --from-literal=TELEGRAM_BOT_TOKEN="\$TG_TOKEN" \\
-  --from-literal=SPRING_DATA_MONGODB_URI="\$MONGO_URI" \\
-  --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \\
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl apply -n "\$NS" -f "\$K8S_DIR/tripplanner-service.yaml"
-
-mkdir -p "\$K8S_RENDER"
-sed -e "s|__APP_IMAGE__|${env.DOCKER_IMAGE}|g" \\
-    -e "s|__IMAGE_PULL_POLICY__|${env.IMAGE_PULL_POLICY}|g" \\
-    "\$K8S_DIR/tripplanner-deployment.yaml" > "\$K8S_RENDER/tripplanner-deployment.rendered.yaml"
-kubectl apply -n "\$NS" -f "\$K8S_RENDER/tripplanner-deployment.rendered.yaml"
-
-kubectl rollout status deployment/tripplanner -n "\$NS" --timeout=600s
-"""
+                withEnv(["KUBECONFIG=${env.KUBECONFIG_CRED}"]) {
+                    sh """
+                        kubectl rollout status deployment/tripplanner -n ${env.K8S_NAMESPACE} --timeout=180s
+                        kubectl get pods -n ${env.K8S_NAMESPACE} -o wide
+                        kubectl get svc -n ${env.K8S_NAMESPACE}
+                    """
                 }
             }
-        }
-    }
-
-    post {
-        always {
-            archiveArtifacts artifacts: 'TripPlannerBot/build/libs/*.jar, infra/kubernetes/.rendered/*.yaml', allowEmptyArchive: true, fingerprint: true
         }
     }
 }
