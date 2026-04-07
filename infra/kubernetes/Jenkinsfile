@@ -48,6 +48,28 @@ pipeline {
             }
         }
 
+        stage('Start k3s on VM') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
+                    sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+                ]) {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+chmod 600 "$SSH_KEY" || true
+SSH_OPTS=(
+  -i "$SSH_KEY"
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ServerAliveInterval=30
+)
+ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" \
+  'sudo systemctl start k3s; for i in $(seq 1 60); do sudo k3s kubectl get nodes --request-timeout=5s >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+'''
+                }
+            }
+        }
+
         stage('Deploy') {
             steps {
                 sh '''
