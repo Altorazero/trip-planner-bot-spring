@@ -1,5 +1,3 @@
-# Лимиты под ноду ~2 vCPU / 2Gi RAM: сумма limits CPU = 2000m, память укладывается в allocatable.
-# requests.cpu приложения 400m ≈ 20% от 2 vCPU как базовая гарантия планировщику.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
