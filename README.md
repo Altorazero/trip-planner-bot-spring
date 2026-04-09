@@ -9,6 +9,9 @@ Telegram бот для планирования путешествий с адм
 - Сборка - Jenkins (sh);
 - Деплой - Jenkins.
 (см. ./infra/)
+
+## K8s
+- см. ./infra/kubernetes/
 ## API Endpoints
 
 ### Административные эндпоинты
