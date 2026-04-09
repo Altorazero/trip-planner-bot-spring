@@ -119,4 +119,10 @@ ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" \
             }
         }
     }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'TripPlannerBot/build/libs/*-all.jar', fingerprint: true, allowEmptyArchive: true
+        }
+    }
 }
