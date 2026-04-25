@@ -80,7 +80,8 @@ docker compose run app
 ```
 
 ## Авторы
-- Салимли Айзек: 
+- Салимли Айзек:
+   - Infra   
    - Planner 
    - Docker 
    - gradle
