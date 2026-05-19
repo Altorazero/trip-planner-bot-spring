@@ -57,7 +57,7 @@ resources:
     type: OS::Nova::Server
     deletion_policy: Delete
     properties:
-      name: tripplanner-Salimli-vm
+      name: tripplanner-Grigorev-vm
       image: { get_param: image }
       flavor: { get_param: flavor }
       key_name: { get_param: key_name }
