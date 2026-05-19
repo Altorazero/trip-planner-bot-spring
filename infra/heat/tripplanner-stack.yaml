@@ -72,6 +72,11 @@ resources:
           - mongodb
           - curl
 
+        runcmd:
+          - [ bash, -c, "id tripplanner &>/dev/null || useradd -m -s /bin/bash tripplanner" ]
+          - [ bash, -c, "mkdir -p /opt/tripplanner" ]
+          - [ bash, -c, "chown tripplanner:tripplanner /opt/tripplanner" ]
+
 outputs:
   instance_id:
     description: Instance ID
