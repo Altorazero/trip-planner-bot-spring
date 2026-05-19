@@ -1,37 +1,76 @@
 terraform {
   required_providers {
-    yandex = {
-      source  = "yandex-cloud/yandex"
-      version = "~> 0.130"
+    openstack = {
+      source  = "terraform-provider-openstack/openstack"
+      version = ">= 1.0"
     }
   }
   required_version = ">= 1.0"
 }
 
-provider "yandex" {
-  folder_id = var.folder_id
+provider "openstack" {
+  auth_url    = var.auth_url
+  tenant_name = var.project_name
+  user_name   = var.user_name
+  password    = var.password
+  domain_name = var.domain_name
+  region      = var.region
 }
 
-variable "folder_id" {
+variable "auth_url" {
   type        = string
-  description = "folder id"
+  description = "OpenStack Identity API endpoint"
 }
 
-variable "subnet_id" {
+variable "user_name" {
   type        = string
-  description = "subnet id"
-  default     = "e2l8upt32adb7kjindkt"
+  description = "OpenStack Username"
 }
 
-variable "security_group_id" {
+variable "password" {
   type        = string
-  description = "security group id"
-  default     = "enp92iphnc0bquh1mg9f"
+  description = "OpenStack Password"
+  sensitive   = true
 }
 
-variable "instance_name" {
-  type    = string
-  default = "tripplanner-vm"
+variable "project_name" {
+  type        = string
+  description = "OpenStack Project (Tenant)"
+}
+
+variable "domain_name" {
+  type        = string
+  default     = "Default"
+  description = "OpenStack domain name"
+}
+
+variable "region" {
+  type        = string
+  default     = "RegionOne"
+  description = "OpenStack region"
+}
+
+variable "network_name" {
+  type        = string
+  description = "Name of the network"
+}
+
+variable "security_group" {
+  type        = string
+  default     = "default"
+  description = "OpenStack security group name"
+}
+
+variable "image_name" {
+  type        = string
+  default     = "Ubuntu 22.04"
+  description = "Name of the OS image"
+}
+
+variable "flavor_name" {
+  type        = string
+  default     = "m1.small"
+  description = "OpenStack VM flavor"
 }
 
 variable "ssh_public_key" {
@@ -39,59 +78,63 @@ variable "ssh_public_key" {
   description = "public ssh key"
 }
 
-data "yandex_vpc_subnet" "main" {
-  subnet_id = var.subnet_id
+variable "instance_name" {
+  type        = string
+  default     = "tripplanner-vm"
 }
 
-data "yandex_compute_image" "ubuntu" {
-  family = "ubuntu-2404-lts"
+# Получаем id нужной сети
+data "openstack_networking_network_v2" "network" {
+  name = var.network_name
 }
 
-resource "yandex_compute_instance" "vm" {
-  name        = var.instance_name
-  platform_id = "standard-v3"
-  zone        = data.yandex_vpc_subnet.main.zone
+# Получаем id нужного публичного образа
+data "openstack_images_image_v2" "image" {
+  name = var.image_name
+}
 
-  resources {
-    cores         = 2
-    memory        = 2
-    core_fraction = 20
+resource "openstack_compute_keypair_v2" "keypair" {
+  name       = "${var.instance_name}-key"
+  public_key = var.ssh_public_key
+}
+
+resource "openstack_compute_instance_v2" "vm" {
+  name            = var.instance_name
+  image_id        = data.openstack_images_image_v2.image.id
+  flavor_name     = var.flavor_name
+  key_pair        = openstack_compute_keypair_v2.keypair.name
+  security_groups = [var.security_group]
+
+  network {
+    uuid = data.openstack_networking_network_v2.network.id
   }
 
-  boot_disk {
-    initialize_params {
-      image_id = data.yandex_compute_image.ubuntu.id
-      size     = 10
-      type     = "network-hdd"
-    }
-  }
+  # Автоматически назначит floating ip (опция, смотри ниже)
+}
 
-  network_interface {
-    subnet_id          = var.subnet_id
-    nat                = true
-    security_group_ids = [var.security_group_id]
-  }
+# --- Блок назначения публичного IP ---
+resource "openstack_networking_floatingip_v2" "fip" {
+  pool = "public-ext" # Имя пула публичных адресов (может отличаться, often 'ext-net'/'public')
+}
 
-  metadata = {
-    ssh-keys = "ubuntu:${var.ssh_public_key}"
-  }
-
-  allow_stopping_for_update = true
+resource "openstack_compute_floatingip_associate_v2" "fip_assoc" {
+  floating_ip = openstack_networking_floatingip_v2.fip.address
+  instance_id = openstack_compute_instance_v2.vm.id
 }
 
 output "instance_id" {
-  value = yandex_compute_instance.vm.id
+  value = openstack_compute_instance_v2.vm.id
 }
 
 output "instance_name" {
-  value = yandex_compute_instance.vm.name
+  value = openstack_compute_instance_v2.vm.name
 }
 
 output "instance_ip" {
   description = "external ip"
-  value       = yandex_compute_instance.vm.network_interface[0].nat_ip_address
+  value       = openstack_networking_floatingip_v2.fip.address
 }
 
 output "instance_internal_ip" {
-  value = yandex_compute_instance.vm.network_interface[0].ip_address
+  value = openstack_compute_instance_v2.vm.network[0].fixed_ip_v4
 }
