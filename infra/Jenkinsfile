@@ -7,22 +7,47 @@ pipeline {
     }
 
     parameters {
+        // OpenStack credentials: username/password as credential, not plain strings!
+        credentials(
+            name: 'OS_CREDS',
+            description: 'OpenStack username/password',
+            required: true,
+            credentialType: 'com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl'
+        )
         string(name: 'OS_AUTH_URL', description: 'OpenStack auth URL', defaultValue: '')
-        string(name: 'OS_USERNAME', description: 'OpenStack username', defaultValue: '')
-        password(name: 'OS_PASSWORD', description: 'OpenStack password')
         string(name: 'OS_PROJECT_NAME', description: 'OpenStack project/tenant name', defaultValue: '')
         string(name: 'OS_DOMAIN_NAME', description: 'OpenStack domain name', defaultValue: 'Default')
         string(name: 'OS_REGION', description: 'OpenStack region', defaultValue: 'RegionOne')
         string(name: 'OS_NETWORK', description: 'OpenStack network name', defaultValue: '')
         string(name: 'OS_IMAGE', description: 'OpenStack image name', defaultValue: 'Ubuntu 22.04')
         string(name: 'OS_FLAVOR', description: 'OpenStack flavor name', defaultValue: 'm1.small')
-        string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'openstack-ssh', description: 'Jenkins SSH private key credential ID')
-        string(name: 'SSH_PUBLIC_KEY_ID', defaultValue: 'openstack-ssh-pub', description: 'Jenkins Secret text with SSH public key')
-        string(name: 'TG_TOKEN_ID', defaultValue: 'telegram-bot-token', description: 'Jenkins Secret text с токеном Telegram бота')
+
+        // SSH private key credential for VM
+        credentials(
+            name: 'SSH_CREDENTIAL_ID',
+            description: 'Jenkins SSH private key credential for VM',
+            required: true,
+            credentialType: 'com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey'
+        )
+
+        // SSH public key (as secret text)
+        credentials(
+            name: 'SSH_PUBLIC_KEY_ID',
+            description: 'Jenkins Secret text with SSH public key',
+            required: true,
+            credentialType: 'org.jenkinsci.plugins.plaincredentials.StringCredentialsImpl'
+        )
+
+        // Telegram token (as secret text)
+        credentials(
+            name: 'TG_TOKEN_ID',
+            description: 'Jenkins Secret text with Telegram bot token',
+            required: true,
+            credentialType: 'org.jenkinsci.plugins.plaincredentials.StringCredentialsImpl'
+        )
     }
 
     environment {
-        // Set JAVA_HOME (под твой сервер, если надо)
         JAVA_HOME = '/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'
     }
 
@@ -30,13 +55,12 @@ pipeline {
         stage('Terraform') {
             steps {
                 withCredentials([
+                    usernamePassword(credentialsId: params.OS_CREDS, usernameVariable: 'OS_USERNAME', passwordVariable: 'OS_PASSWORD'),
                     string(credentialsId: params.SSH_PUBLIC_KEY_ID, variable: 'SSH_PUB_KEY')
                 ]) {
                     dir('infra/terraform') {
                         withEnv([
                             "OS_AUTH_URL=${params.OS_AUTH_URL}",
-                            "OS_USERNAME=${params.OS_USERNAME}",
-                            "OS_PASSWORD=${params.OS_PASSWORD}",
                             "OS_PROJECT_NAME=${params.OS_PROJECT_NAME}",
                             "OS_DOMAIN_NAME=${params.OS_DOMAIN_NAME}",
                             "OS_REGION_NAME=${params.OS_REGION}"
@@ -45,15 +69,15 @@ pipeline {
                                 terraform init -input=false
                                 terraform apply -auto-approve -input=false \
                                     -var="auth_url=${OS_AUTH_URL}" \
-                                    -var="username=${OS_USERNAME}" \
-                                    -var="password=${OS_PASSWORD}" \
+                                    -var="username=$OS_USERNAME" \
+                                    -var="password=$OS_PASSWORD" \
                                     -var="project_name=${OS_PROJECT_NAME}" \
                                     -var="domain_name=${OS_DOMAIN_NAME}" \
                                     -var="region=${OS_REGION_NAME}" \
                                     -var="network_name=${OS_NETWORK}" \
                                     -var="image_name=${OS_IMAGE}" \
                                     -var="flavor_name=${OS_FLAVOR}" \
-                                    -var="ssh_public_key=${SSH_PUB_KEY}"
+                                    -var="ssh_public_key=$SSH_PUB_KEY"
                             '''
                             script {
                                 env.VM_IP = sh(script: 'terraform output -raw instance_ip', returnStdout: true).trim()
@@ -71,7 +95,7 @@ pipeline {
                     sshUserPrivateKey(credentialsId: params.SSH_CREDENTIAL_ID, keyFileVariable: 'SSH_KEY'),
                     string(credentialsId: params.TG_TOKEN_ID, variable: 'TG_TOKEN')
                 ]) {
-                    dir('infra/ansible') { // поправь под свой относительный путь до playbook
+                    dir('infra/ansible') {
                         sh """
                         sleep 30
                         ansible-playbook -i '${env.VM_IP},' \
