@@ -7,22 +7,18 @@ pipeline {
     }
 
     parameters {
-        // OpenStack credentials: username/password as credential, not plain strings!
+        // OpenStack openrc файл (секрет как "Secret file" в Jenkins)
         credentials(
-            name: 'OS_CREDS',
-            description: 'OpenStack username/password',
+            name: 'OPENRC_FILE',
+            description: 'OpenStack openrc file (тип Secret file)',
             required: true,
-            credentialType: 'com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl'
+            credentialType: 'org.jenkinsci.plugins.plaincredentials.FileCredentialsImpl'
         )
-        string(name: 'OS_AUTH_URL', description: 'OpenStack auth URL', defaultValue: '')
-        string(name: 'OS_PROJECT_NAME', description: 'OpenStack project/tenant name', defaultValue: '')
-        string(name: 'OS_DOMAIN_NAME', description: 'OpenStack domain name', defaultValue: 'Default')
-        string(name: 'OS_REGION', description: 'OpenStack region', defaultValue: 'RegionOne')
+
         string(name: 'OS_NETWORK', description: 'OpenStack network name', defaultValue: '')
         string(name: 'OS_IMAGE', description: 'OpenStack image name', defaultValue: 'Ubuntu 22.04')
         string(name: 'OS_FLAVOR', description: 'OpenStack flavor name', defaultValue: 'm1.small')
 
-        // SSH private key credential for VM
         credentials(
             name: 'SSH_CREDENTIAL_ID',
             description: 'Jenkins SSH private key credential for VM',
@@ -30,7 +26,6 @@ pipeline {
             credentialType: 'com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey'
         )
 
-        // SSH public key (as secret text)
         credentials(
             name: 'SSH_PUBLIC_KEY_ID',
             description: 'Jenkins Secret text with SSH public key',
@@ -38,7 +33,6 @@ pipeline {
             credentialType: 'org.jenkinsci.plugins.plaincredentials.StringCredentialsImpl'
         )
 
-        // Telegram token (as secret text)
         credentials(
             name: 'TG_TOKEN_ID',
             description: 'Jenkins Secret text with Telegram bot token',
@@ -55,33 +49,27 @@ pipeline {
         stage('Terraform') {
             steps {
                 withCredentials([
-                    usernamePassword(credentialsId: params.OS_CREDS, usernameVariable: 'OS_USERNAME', passwordVariable: 'OS_PASSWORD'),
+                    file(credentialsId: params.OPENRC_FILE, variable: 'OPENRC_FILE'),
                     string(credentialsId: params.SSH_PUBLIC_KEY_ID, variable: 'SSH_PUB_KEY')
                 ]) {
                     dir('infra/terraform') {
-                        withEnv([
-                            "OS_AUTH_URL=${params.OS_AUTH_URL}",
-                            "OS_PROJECT_NAME=${params.OS_PROJECT_NAME}",
-                            "OS_DOMAIN_NAME=${params.OS_DOMAIN_NAME}",
-                            "OS_REGION_NAME=${params.OS_REGION}"
-                        ]) {
-                            sh '''
-                                terraform init -input=false
-                                terraform apply -auto-approve -input=false \
-                                    -var="auth_url=${OS_AUTH_URL}" \
-                                    -var="username=$OS_USERNAME" \
-                                    -var="password=$OS_PASSWORD" \
-                                    -var="project_name=${OS_PROJECT_NAME}" \
-                                    -var="domain_name=${OS_DOMAIN_NAME}" \
-                                    -var="region=${OS_REGION_NAME}" \
-                                    -var="network_name=${OS_NETWORK}" \
-                                    -var="image_name=${OS_IMAGE}" \
-                                    -var="flavor_name=${OS_FLAVOR}" \
-                                    -var="ssh_public_key=$SSH_PUB_KEY"
-                            '''
-                            script {
-                                env.VM_IP = sh(script: 'terraform output -raw instance_ip', returnStdout: true).trim()
-                            }
+                        sh """
+                            . \$OPENRC_FILE
+                            terraform init -input=false
+                            terraform apply -auto-approve -input=false \\
+                                -var="auth_url=\$OS_AUTH_URL" \\
+                                -var="username=\$OS_USERNAME" \\
+                                -var="password=\$OS_PASSWORD" \\
+                                -var="project_name=\$OS_PROJECT_NAME" \\
+                                -var="domain_name=\$OS_USER_DOMAIN_NAME" \\
+                                -var="region=\$OS_REGION_NAME" \\
+                                -var="network_name=${params.OS_NETWORK}" \\
+                                -var="image_name=${params.OS_IMAGE}" \\
+                                -var="flavor_name=${params.OS_FLAVOR}" \\
+                                -var="ssh_public_key=\$SSH_PUB_KEY"
+                        """
+                        script {
+                            env.VM_IP = sh(script: 'terraform output -raw instance_ip', returnStdout: true).trim()
                         }
                     }
                 }
@@ -97,13 +85,13 @@ pipeline {
                 ]) {
                     dir('infra/ansible') {
                         sh """
-                        sleep 30
-                        ansible-playbook -i '${env.VM_IP},' \
-                            -u ubuntu \
-                            --private-key=\$SSH_KEY \
-                            --ssh-extra-args='-o StrictHostKeyChecking=no' \
-                            playbook.yml \
-                            -e telegram_bot_token=\$TG_TOKEN
+                            sleep 30
+                            ansible-playbook -i '${env.VM_IP},' \\
+                                -u ubuntu \\
+                                --private-key=\$SSH_KEY \\
+                                --ssh-extra-args='-o StrictHostKeyChecking=no' \\
+                                playbook.yml \\
+                                -e telegram_bot_token=\$TG_TOKEN
                         """
                     }
                 }
@@ -127,11 +115,11 @@ pipeline {
                     script {
                         def jarPath = sh(script: 'ls TripPlannerBot/build/libs/*.jar | head -1', returnStdout: true).trim()
                         sh """
-                        scp -i \$SSH_KEY -o StrictHostKeyChecking=no ${jarPath} ubuntu@${env.VM_IP}:/tmp/app.jar
-                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@${env.VM_IP} \
-                            'sudo mv /tmp/app.jar /opt/tripplanner/app.jar && \
-                            sudo chown tripplanner:tripplanner /opt/tripplanner/app.jar && \
-                            sudo systemctl restart tripplanner'
+                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no ${jarPath} ubuntu@${env.VM_IP}:/tmp/app.jar
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@${env.VM_IP} \\
+                                'sudo mv /tmp/app.jar /opt/tripplanner/app.jar && \\
+                                 sudo chown tripplanner:tripplanner /opt/tripplanner/app.jar && \\
+                                 sudo systemctl restart tripplanner'
                         """
                     }
                 }
