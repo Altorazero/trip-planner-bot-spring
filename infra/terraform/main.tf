@@ -118,8 +118,8 @@ resource "openstack_networking_floatingip_v2" "fip" {
 }
 
 resource "openstack_networking_floatingip_associate_v2" "fip_assoc" {
-  floatingip_id = openstack_networking_floatingip_v2.fip.id
-  port_id       = openstack_compute_instance_v2.vm.network.0.port
+  floating_ip = openstack_networking_floatingip_v2.fip.address
+  port_id     = openstack_networking_port_v2.port.id
 }
 
 output "instance_id" {
