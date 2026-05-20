@@ -16,7 +16,7 @@ pipeline {
         )
 
         string(name: 'OS_NETWORK', description: 'OpenStack network name', defaultValue: 'student-net')
-        string(name: 'OS_IMAGE', description: 'OpenStack image name', defaultValue: 'Ubuntu 24.04')
+        string(name: 'OS_IMAGE', description: 'OpenStack image name', defaultValue: 'ubuntu-24.04')
         string(name: 'OS_FLAVOR', description: 'OpenStack flavor name', defaultValue: 'm1.small')
 
         credentials(
