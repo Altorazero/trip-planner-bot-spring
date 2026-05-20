@@ -1,5 +1,5 @@
 terraform {
-required_providers {
+  required_providers {
     openstack = {
       source  = "hashicorp/openstack"
       version = "3.4.0"
@@ -83,7 +83,7 @@ variable "instance_name" {
   default     = "tripplanner-vm"
 }
 
-# Получаем id нужной сети
+# Получаем id нужной сети (по имени)
 data "openstack_networking_network_v2" "network" {
   name = var.network_name
 }
@@ -91,6 +91,13 @@ data "openstack_networking_network_v2" "network" {
 # Получаем id нужного публичного образа
 data "openstack_images_image_v2" "image" {
   name = var.image_name
+}
+
+# Добавлен: создание отдельного порта для VM
+resource "openstack_networking_port_v2" "port" {
+  name       = "${var.instance_name}-port"
+  network_id = data.openstack_networking_network_v2.network.id
+  security_group_ids = [var.security_group] # если у тебя security_group — id, если name — см. ниже коммент
 }
 
 resource "openstack_compute_keypair_v2" "keypair" {
@@ -103,18 +110,16 @@ resource "openstack_compute_instance_v2" "vm" {
   image_id        = data.openstack_images_image_v2.image.id
   flavor_name     = var.flavor_name
   key_pair        = openstack_compute_keypair_v2.keypair.name
-  security_groups = [var.security_group]
 
+  # Теперь привязка не через uuid (network), а через порт
   network {
-    uuid = data.openstack_networking_network_v2.network.id
+    port = openstack_networking_port_v2.port.id
   }
-
-  # Автоматически назначит floating ip (опция, смотри ниже)
 }
 
 # --- Блок назначения публичного IP ---
 resource "openstack_networking_floatingip_v2" "fip" {
-  pool = "public-ext" # Имя пула публичных адресов (может отличаться, often 'ext-net'/'public')
+  pool = "public-ext" # Имя пула публичных адресов (замени если требуется)
 }
 
 resource "openstack_networking_floatingip_associate_v2" "fip_assoc" {
