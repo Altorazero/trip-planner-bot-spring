@@ -83,6 +83,10 @@ variable "instance_name" {
   default     = "tripplanner-vm"
 }
 
+data "openstack_networking_secgroup_v2" "secgroup" {
+  name = var.security_group
+}
+
 # Получаем id нужной сети (по имени)
 data "openstack_networking_network_v2" "network" {
   name = var.network_name
@@ -97,7 +101,7 @@ data "openstack_images_image_v2" "image" {
 resource "openstack_networking_port_v2" "port" {
   name       = "${var.instance_name}-port"
   network_id = data.openstack_networking_network_v2.network.id
-  security_group_ids = [var.security_group] # если у тебя security_group — id, если name — см. ниже коммент
+  security_group_ids = [data.openstack_networking_secgroup_v2.secgroup.id]
 }
 
 resource "openstack_compute_keypair_v2" "keypair" {
