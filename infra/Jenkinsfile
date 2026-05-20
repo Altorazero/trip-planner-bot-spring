@@ -58,7 +58,7 @@ pipeline {
                             terraform init -input=false
                             terraform apply -auto-approve -input=false \\
                                 -var="auth_url=\$OS_AUTH_URL" \\
-                                -var="username=\$OS_USERNAME" \\
+                                -var="user_name=\$OS_USERNAME" \\
                                 -var="password=\$OS_PASSWORD" \\
                                 -var="project_name=\$OS_PROJECT_NAME" \\
                                 -var="domain_name=\$OS_USER_DOMAIN_NAME" \\
