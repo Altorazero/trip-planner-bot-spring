@@ -83,7 +83,7 @@ pipeline {
                     sshUserPrivateKey(credentialsId: params.SSH_CREDENTIAL_ID, keyFileVariable: 'SSH_KEY'),
                     string(credentialsId: params.TG_TOKEN_ID, variable: 'TG_TOKEN')
                 ]) {
-                    dir('infra/ansible') {
+                    dir('infra/terraform/ansible') {
                         sh """
                             sleep 30
                             ansible-playbook -i '${env.VM_IP},' \\
