@@ -1,14 +1,14 @@
 pipeline {
-    agent any
+    agent { label 'windows' } // либо 'any', если только один агент и он Windows
 
     environment {
         TELEGRAM_TOKEN = credentials('telegram-bot-token')
         MONGO_URI = credentials('mongo-uri-k8s')
-        DOCKER_IMAGE = 'docker.io/flugmaschine/tripplanner'
+        DOCKER_IMAGE = 'docker.io/altorazero/tripplanner'
         IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
         K8S_NAMESPACE = 'tripplanner'
-        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
-        DOCKER_HOST = "unix://${env.HOME}/.colima/default/docker.sock"
+        // PATH -- не нужно переопределять на Windows
+        // DOCKER_HOST -- скорее всего не нужно, если работает Docker Desktop
     }
 
     stages {
@@ -16,12 +16,15 @@ pipeline {
             steps {
                 checkout scm
                 dir('TripPlannerBot') {
-                    sh 'chmod +x gradlew && ./gradlew clean shadowJar --no-daemon'
-                    sh '''
-                        export DOCKER_BUILDKIT=1
-                        docker buildx build --platform linux/amd64 --load \
-                          -t ${DOCKER_IMAGE}:${IMAGE_TAG} \
-                          -t ${DOCKER_IMAGE}:latest \
+                    // Gradle, если он .bat или .cmd, иначе через оболочку
+                    powershell 'chmod +x gradlew'   // Можно пропустить на Windows
+                    powershell '.\\gradlew.bat clean shadowJar --no-daemon'
+                    // Docker Buildx
+                    powershell '''
+                        $env:DOCKER_BUILDKIT=1
+                        docker buildx build --platform linux/amd64 --load `
+                          -t $env:DOCKER_IMAGE:$env:IMAGE_TAG `
+                          -t $env:DOCKER_IMAGE:latest `
                           .
                     '''
                 }
@@ -35,10 +38,10 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
-                        docker push ${DOCKER_IMAGE}:latest
+                    powershell '''
+                        echo $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin
+                        docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG
+                        docker push $env:DOCKER_IMAGE:latest
                     '''
                 }
             }
@@ -50,51 +53,50 @@ pipeline {
                     string(credentialsId: 'k8s-node-host', variable: 'K8S_NODE_HOST'),
                     sshUserPrivateKey(credentialsId: 'ya-cloud-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
                 ]) {
-                    sh '''#!/usr/bin/env bash
-set -euo pipefail
-chmod 600 "$SSH_KEY" || true
-SSH_OPTS=(
-  -i "$SSH_KEY"
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
-  -o ServerAliveInterval=30
-)
-ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" \
-  'sudo systemctl start k3s; for i in $(seq 1 60); do sudo k3s kubectl get nodes --request-timeout=5s >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
-'''
+                    powershell '''
+                        $sshKey = $env:SSH_KEY
+                        $k8sHost = $env:K8S_NODE_HOST
+                        $sshUser = $env:SSH_USER
+                        # На Windows OpenSSH обычно установлен как 'ssh'
+                        ssh -i "$sshKey" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 `
+                          "$sshUser@$k8sHost" `
+                          "sudo systemctl start k3s; for ($i=0; $i -lt 60; $i++) { sudo k3s kubectl get nodes --request-timeout=5s || exit 1; Start-Sleep -Seconds 2 }"
+                    '''
                 }
             }
         }
 
         stage('Deploy') {
             steps {
-                sh '''
-                    if ! command -v kubectl &> /dev/null; then
-                        ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-                        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
-                        chmod +x kubectl && mv kubectl /usr/local/bin/
-                    fi
+                // kubectl на Windows - убедись, что он стоит и прописан в PATH!
+                powershell '''
+                    if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
+                        $arch = (Get-CimInstance -ClassName Win32_Processor).Architecture
+                        if ($arch -eq 9) { $kubearch = "amd64" } elseif ($arch -eq 12) { $kubearch = "arm64" } else { $kubearch = "amd64" }
+                        Invoke-WebRequest -Uri "https://dl.k8s.io/release/$(Invoke-RestMethod https://dl.k8s.io/release/stable.txt)/bin/windows/$kubearch/kubectl.exe" -OutFile "kubectl.exe"
+                        Copy-Item .\kubectl.exe $env:ProgramFiles\kubectl.exe
+                    }
                 '''
-                sh 'rm -rf k8s && cp -r infra/kubernetes k8s'
+                powershell 'Remove-Item -Recurse -Force k8s; Copy-Item -Recurse infra/kubernetes k8s'
 
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh 'kubectl apply -f k8s/namespace.yaml'
-                    sh "kubectl apply -f k8s/mongo.yaml -n ${env.K8S_NAMESPACE}"
-                    sh """
-                        kubectl create secret generic tripplanner-secrets \\
-                            --namespace=${env.K8S_NAMESPACE} \\
-                            --from-literal=TELEGRAM_BOT_TOKEN=\${TELEGRAM_TOKEN} \\
-                            --from-literal=SPRING_DATA_MONGODB_URI=\${MONGO_URI} \\
-                            --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner \\
+                    powershell '''
+                        $env:KUBECONFIG = "$env:KUBECONFIG"
+                        kubectl apply -f k8s/namespace.yaml
+                        kubectl apply -f k8s/mongo.yaml -n $env:K8S_NAMESPACE
+                        kubectl create secret generic tripplanner-secrets `
+                            --namespace=$env:K8S_NAMESPACE `
+                            --from-literal=TELEGRAM_BOT_TOKEN=$env:TELEGRAM_TOKEN `
+                            --from-literal=SPRING_DATA_MONGODB_URI=$env:MONGO_URI `
+                            --from-literal=SPRING_DATA_MONGODB_DATABASE=tripplanner `
                             --dry-run=client -o yaml | kubectl apply -f -
-                    """
-                    sh "kubectl apply -f k8s/tripplanner-service.yaml -n ${env.K8S_NAMESPACE}"
-                    sh """
-                        sed -e 's|__APP_IMAGE__|${env.DOCKER_IMAGE}:${env.IMAGE_TAG}|g' \\
-                            -e 's|__IMAGE_PULL_POLICY__|Always|g' \\
-                            k8s/tripplanner-deployment.yaml > k8s/tripplanner-deployment.rendered.yaml
-                        kubectl apply -f k8s/tripplanner-deployment.rendered.yaml -n ${env.K8S_NAMESPACE}
-                    """
+                        kubectl apply -f k8s/tripplanner-service.yaml -n $env:K8S_NAMESPACE
+                        $deployYaml = Get-Content k8s/tripplanner-deployment.yaml
+                        $deployYaml = $deployYaml -replace '__APP_IMAGE__', "$env:DOCKER_IMAGE:$env:IMAGE_TAG"
+                        $deployYaml = $deployYaml -replace '__IMAGE_PULL_POLICY__', 'Always'
+                        $deployYaml | Set-Content k8s/tripplanner-deployment.rendered.yaml
+                        kubectl apply -f k8s/tripplanner-deployment.rendered.yaml -n $env:K8S_NAMESPACE
+                    '''
                 }
             }
         }
@@ -102,12 +104,13 @@ ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" \
         stage('Verify') {
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh """
-                        kubectl rollout status deployment/mongo -n ${env.K8S_NAMESPACE} --timeout=600s
-                        kubectl rollout status deployment/tripplanner -n ${env.K8S_NAMESPACE} --timeout=300s
-                        kubectl get pods -n ${env.K8S_NAMESPACE} -o wide
-                        kubectl get svc -n ${env.K8S_NAMESPACE}
-                    """
+                    powershell '''
+                        $env:KUBECONFIG = "$env:KUBECONFIG"
+                        kubectl rollout status deployment/mongo -n $env:K8S_NAMESPACE --timeout=600s
+                        kubectl rollout status deployment/tripplanner -n $env:K8S_NAMESPACE --timeout=300s
+                        kubectl get pods -n $env:K8S_NAMESPACE -o wide
+                        kubectl get svc -n $env:K8S_NAMESPACE
+                    '''
                 }
             }
         }
@@ -115,7 +118,7 @@ ssh "${SSH_OPTS[@]}" "${SSH_USER}@${K8S_NODE_HOST}" \
 
     post {
         always {
-            archiveArtifacts artifacts: 'TripPlannerBot/build/libs/*.jar', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'TripPlannerBot\\build\\libs\\*.jar', fingerprint: true, allowEmptyArchive: true
         }
     }
 }
