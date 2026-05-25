@@ -19,7 +19,9 @@ pipeline {
                     // Gradle, если он .bat или .cmd, иначе через оболочку
                     powershell '.\\gradlew.bat clean shadowJar --no-daemon'
                     // Docker Buildx
+                    powershell 'dir'
                     powershell '$env:DOCKER_BUILDKIT=1; docker buildx build --platform linux/amd64 --load -t $env:DOCKER_IMAGE:$env:IMAGE_TAG -t $env:DOCKER_IMAGE:latest .'
+                    powershell 'dir'
                 }
             }
         }
