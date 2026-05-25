@@ -20,8 +20,15 @@ pipeline {
                     powershell '.\\gradlew.bat clean shadowJar --no-daemon'
                     // Docker Buildx
                     powershell '''
+    Write-Host "PWD:"; pwd
+    Write-Host "DIR:"
+    dir
+
     $env:DOCKER_BUILDKIT=1
-    docker buildx build --platform linux/amd64 --load -t $env:DOCKER_IMAGE:$env:IMAGE_TAG -t $env:DOCKER_IMAGE:latest .
+
+    Write-Host "=== RUN command ==="
+    Write-Host "docker buildx build --platform linux/amd64 --load -t $env:DOCKER_IMAGE`:$env:IMAGE_TAG -t $env:DOCKER_IMAGE`:latest ."
+    docker buildx build --platform linux/amd64 --load -t $env:DOCKER_IMAGE`:$env:IMAGE_TAG -t $env:DOCKER_IMAGE`:latest .
 '''
                 }
             }
