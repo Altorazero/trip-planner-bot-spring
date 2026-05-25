@@ -74,7 +74,7 @@ pipeline {
                         $arch = (Get-CimInstance -ClassName Win32_Processor).Architecture
                         if ($arch -eq 9) { $kubearch = "amd64" } elseif ($arch -eq 12) { $kubearch = "arm64" } else { $kubearch = "amd64" }
                         Invoke-WebRequest -Uri "https://dl.k8s.io/release/$(Invoke-RestMethod https://dl.k8s.io/release/stable.txt)/bin/windows/$kubearch/kubectl.exe" -OutFile "kubectl.exe"
-                        Copy-Item .\kubectl.exe $env:ProgramFiles\kubectl.exe
+                        Copy-Item ".\\kubectl.exe" "$env:ProgramFiles\\kubectl.exe"
                     }
                 '''
                 powershell 'Remove-Item -Recurse -Force k8s; Copy-Item -Recurse infra/kubernetes k8s'
