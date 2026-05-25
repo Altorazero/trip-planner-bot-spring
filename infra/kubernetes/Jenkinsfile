@@ -17,7 +17,6 @@ pipeline {
                 checkout scm
                 dir('TripPlannerBot') {
                     // Gradle, если он .bat или .cmd, иначе через оболочку
-                    powershell 'chmod +x gradlew'   // Можно пропустить на Windows
                     powershell '.\\gradlew.bat clean shadowJar --no-daemon'
                     // Docker Buildx
                     powershell '''
