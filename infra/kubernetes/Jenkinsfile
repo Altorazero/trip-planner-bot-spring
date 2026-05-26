@@ -41,8 +41,8 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    echo $DOCKER_USER
-                    echo $DOCKER_PASS
+                    echo $env:DOCKER_USER
+                    echo $env:DOCKER_PASS
                     powershell 'whoami'
                     powershell 'docker info'
                     powershell '''
