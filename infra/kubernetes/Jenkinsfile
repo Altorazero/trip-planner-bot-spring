@@ -51,17 +51,16 @@ pipeline {
                 ]) {
                     powershell '''
                         $sshKey = $env:SSH_KEY
-                        # Исправим права доступа на ключ для OpenSSH
+                        # !!! icacls fix остается
                         icacls "$sshKey" /inheritance:r
                         icacls "$sshKey" /grant:r "$($env:USERNAME):(R)"
                         icacls "$sshKey" /remove "Users" "Authenticated Users" "BUILTIN\\Administrators" "Everyone"
-                        # Проверим права
-                        icacls "$sshKey"
                         $k8sHost = $env:K8S_NODE_HOST
                         $sshUser = $env:SSH_USER
+                        # ОТПРАВИМ ИМЕННО bash-цикл на сервер, НЕ PowerShell:
                         ssh -i "$sshKey" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 `
                           "$sshUser@$k8sHost" `
-                          "sudo systemctl start k3s; for (\$i=0; \$i -lt 60; \$i++) { sudo k3s kubectl get nodes --request-timeout=5s || exit 1; Start-Sleep -Seconds 2 }"
+                          "sudo systemctl start k3s; for i in {1..60}; do sudo k3s kubectl get nodes --request-timeout=5s >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"
                     '''
                 }
             }
