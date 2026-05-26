@@ -11,27 +11,23 @@ pipeline {
         // DOCKER_HOST -- скорее всего не нужно, если работает Docker Desktop
     }
 
-stage('Build') {
-    steps {
-        checkout scm
+    stages {
+        stage('Build') {
+            steps {
+                checkout scm
+                dir('TripPlannerBot') {
+                    powershell '.\\gradlew.bat clean shadowJar --no-daemon'
+                    powershell '''
+                        $env:DOCKER_BUILDKIT=1
+                        Write-Host "=== Building image ${env:DOCKER_IMAGE}:${env:IMAGE_TAG} ==="
 
-        dir('TripPlannerBot') {
-            powershell '.\\gradlew.bat clean shadowJar --no-daemon'
-
-            powershell '''
-                $env:DOCKER_BUILDKIT=1
-
-                Write-Host "DOCKER_IMAGE = '$env:DOCKER_IMAGE'"
-                Write-Host "IMAGE_TAG   = '$env:IMAGE_TAG'"
-                Write-Host "FULL IMAGE  = '$env:DOCKER_IMAGE`:$env:IMAGE_TAG'"
-
-                Write-Host "=== Building image $env:DOCKER_IMAGE`:$env:IMAGE_TAG ==="
-
-                docker buildx build --platform linux/amd64 --load -t "$env:DOCKER_IMAGE`:$env:IMAGE_TAG" .
-            '''
+                        docker buildx build --platform linux/amd64 --load -t "$env:DOCKER_IMAGE`:$env:IMAGE_TAG" .
+                    ''' 
+                }
+            }
         }
-    }
-}
+    
+
 
         stage('Push') {
             steps {
