@@ -36,17 +36,46 @@ pipeline {
 
         stage('Push') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    powershell '''
-                        echo $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin
-                        docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG
-                        docker push $env:DOCKER_IMAGE:latest
-                    '''
-                }
+withCredentials([usernamePassword(
+    credentialsId: 'docker-hub-creds',
+    usernameVariable: 'DOCKER_USER',
+    passwordVariable: 'DOCKER_PASS'
+)]) {
+    powershell '''
+        Write-Host "------ ОТЛАДКА DOCKER PUSH ------"
+        Write-Host "Jenkins агент: $(whoami)"
+        Write-Host "Username: $env:DOCKER_USER"
+        Write-Host "Token length: $($env:DOCKER_PASS.Length)"
+        Write-Host "IMAGE: $env:DOCKER_IMAGE"
+        Write-Host "TAG: $env:IMAGE_TAG"
+        Write-Host "docker --version:"
+        docker --version
+        Write-Host "docker context ls:"
+        docker context ls
+        Write-Host "Docker Hub ping:"
+        curl https://registry-1.docker.io/v2/ -UseBasicParsing
+
+        Write-Host "Пробуем docker login"
+        # Обязательно без пробелов после echo!
+        echo $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "docker login FAILED! Код $LASTEXITCODE"
+        } else {
+            Write-Host "docker login SUCCEEDED"
+        }
+
+        Write-Host "docker images:"
+        docker images
+
+        Write-Host "Пробуем docker push с полным тегом:"
+        docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG
+
+        Write-Host "docker logout"
+        docker logout
+
+        Write-Host "------ ОКОНЧАНИЕ ОТЛАДКИ ------"
+    '''
+}
             }
         }
 
