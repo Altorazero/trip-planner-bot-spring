@@ -22,9 +22,8 @@ pipeline {
                         $env:DOCKER_BUILDKIT=1
                         Write-Host "=== Building image ${env:DOCKER_IMAGE}:${env:IMAGE_TAG} ==="
 
-                        docker buildx build --platform linux/amd64 --load `
-                          -t $env:DOCKER_IMAGE`:$env:IMAGE_TAG .`
-                    '''
+                        docker buildx build --platform linux/amd64 --load -t "$env:DOCKER_IMAGE`:$env:IMAGE_TAG" .
+                    ''' 
                 }
             }
         }
