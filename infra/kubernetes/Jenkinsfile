@@ -38,7 +38,7 @@ pipeline {
             steps {
         powershell '''
             docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG
-            docker push $env:DOCKER_IMAGE:latest
+            docker push $env:DOCKER_IMAGE
         '''    
             }
         }
