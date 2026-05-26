@@ -27,7 +27,7 @@ pipeline {
                     string(credentialsId: params.YC_TOKEN_ID,  variable: 'YC_TOKEN'),
                     string(credentialsId: params.SSH_PUBKEY_ID, variable: 'SSH_PUB_KEY')
                 ]) {
-                    dir('infra/terraform') {
+                    dir('infra/terraformya') {
                         sh '''
                             terraform init -input=false
                             terraform apply -auto-approve -input=false \
@@ -49,7 +49,7 @@ pipeline {
                     sshUserPrivateKey(credentialsId: params.SSH_CREDENTIAL_ID, keyFileVariable: 'SSH_KEY'),
                     string(credentialsId: params.TG_TOKEN_ID, variable: 'TG_TOKEN')
                 ]) {
-                    dir('infra/terraform') {
+                    dir('infra/terraformya') {
                         sh """
                             sleep 30
                             ansible-playbook -i '${env.VM_IP},' \
