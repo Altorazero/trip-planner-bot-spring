@@ -50,7 +50,7 @@ data "yandex_compute_image" "ubuntu" {
 resource "yandex_compute_instance" "vm" {
   name        = var.instance_name
   platform_id = "standard-v3"
-  zone        = data.yandex_vpc_subnet.main.zone
+  zone = "ru-central1-a"
 
   resources {
     cores         = 2
