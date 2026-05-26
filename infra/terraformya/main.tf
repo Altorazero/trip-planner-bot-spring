@@ -20,13 +20,13 @@ variable "folder_id" {
 variable "subnet_id" {
   type        = string
   description = "subnet id"
-  default     = "e2l8upt32adb7kjindkt"
+  default     = "enptag12jgor0h78uh2k"
 }
 
 variable "security_group_id" {
   type        = string
   description = "security group id"
-  default     = "enp92iphnc0bquh1mg9f"
+  default     = "enpmg6qfj4drvkgke6af"
 }
 
 variable "instance_name" {
