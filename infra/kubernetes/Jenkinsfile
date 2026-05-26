@@ -82,7 +82,7 @@ pipeline {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     powershell '''
                         $env:KUBECONFIG = "$env:KUBECONFIG"
-                        kubectl apply -f k8s/namespace.yaml
+                        kubectl apply -f k8s/namespace.yaml --validate=false
                         kubectl apply -f k8s/mongo.yaml -n $env:K8S_NAMESPACE
                         kubectl create secret generic tripplanner-secrets `
                             --namespace=$env:K8S_NAMESPACE `
