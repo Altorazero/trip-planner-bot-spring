@@ -107,8 +107,8 @@ stage('Build') {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     powershell '''
                         $env:KUBECONFIG = "$env:KUBECONFIG"
-                        kubectl rollout status deployment/mongo -n $env:K8S_NAMESPACE --timeout=600s
-                        kubectl rollout status deployment/tripplanner -n $env:K8S_NAMESPACE --timeout=300s
+                        kubectl rollout status deployment/mongo -n $env:K8S_NAMESPACE --timeout=300s
+                        kubectl rollout status deployment/tripplanner -n $env:K8S_NAMESPACE --timeout=180s
                         kubectl get pods -n $env:K8S_NAMESPACE -o wide
                         kubectl get svc -n $env:K8S_NAMESPACE
                     '''
