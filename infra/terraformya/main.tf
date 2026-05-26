@@ -20,7 +20,7 @@ variable "folder_id" {
 variable "subnet_id" {
   type        = string
   description = "subnet id"
-  default     = "enptag12jgor0h78uh2k"
+  default     = "e9bgj6qqvs6ccgrvkeb4"
 }
 
 variable "security_group_id" {
