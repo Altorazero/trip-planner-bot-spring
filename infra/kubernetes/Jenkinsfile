@@ -35,46 +35,7 @@ pipeline {
         }
 
         stage('Push') {
-            steps {
-withCredentials([usernamePassword(
-    credentialsId: 'docker-hub-creds',
-    usernameVariable: 'DOCKER_USER',
-    passwordVariable: 'DOCKER_PASS'
-)]) {
-    powershell '''
-        Write-Host "------ ОТЛАДКА DOCKER PUSH (v2) ------"
-        Write-Host "Jenkins агент: $(whoami)"
-        Write-Host "Username: $env:DOCKER_USER"
-        Write-Host "Token length: $($env:DOCKER_PASS.Length)"
-        Write-Host "IMAGE: $env:DOCKER_IMAGE"
-        Write-Host "TAG: $env:IMAGE_TAG"
-
-        Write-Host "ПРОБУЕМ docker login (stdout + stderr):"
-        $loginResult = echo $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin 2>&1
-        Write-Host "docker login output: $loginResult"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "!!! docker login FAILED, code $LASTEXITCODE"
-            exit $LASTEXITCODE
-        } else {
-            Write-Host "... docker login SUCCEEDED!"
-        }
-
-        Write-Host "docker images list:"
-        docker images
-        Write-Host "docker push:"
-        $pushResult = docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG 2>&1
-        Write-Host "docker push output: $pushResult"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "!!! docker push FAILED, code $LASTEXITCODE"
-            exit $LASTEXITCODE
-        }
-
-        Write-Host "docker logout"
-        docker logout
-        Write-Host "------ ОТЛАДКА DOCKER PUSH END ------"
-    '''
-}
-            }
+            
         }
 
         stage('Start k3s on VM') {
