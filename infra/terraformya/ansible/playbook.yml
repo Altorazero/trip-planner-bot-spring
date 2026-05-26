@@ -1,0 +1,139 @@
+---
+- name: Provision TripPlannerBot VM
+  hosts: all
+  become: true
+  vars:
+    app_user: tripplanner
+    app_group: tripplanner
+    app_dir: /opt/tripplanner
+    mongodb_uri: "{{ spring_data_mongodb_uri | default('mongodb://localhost:27017/tripplanner?retryWrites=true&w=majority') }}"
+    mongodb_database: "{{ spring_data_mongodb_database | default('tripplanner') }}"
+
+  tasks:
+    - name: Wait for cloud-init to complete
+      wait_for:
+        path: /var/lib/cloud/instance/boot-finished
+        timeout: 300
+
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base packages
+      apt:
+        name:
+          - curl
+          - gnupg
+          - wget
+          - ca-certificates
+          - software-properties-common
+          - apt-transport-https
+        state: present
+
+    - name: Install OpenJDK 21
+      apt:
+        name: openjdk-21-jdk
+        state: present
+
+    - name: Add MongoDB 7.x GPG key
+      apt_key:
+        url: https://www.mongodb.org/static/pgp/server-7.0.asc
+        state: present
+
+    - name: Add MongoDB 7.x repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse"
+        filename: mongodb-org-7.0
+        state: present
+
+    - name: Install MongoDB
+      apt:
+        name: mongodb-org
+        state: present
+        update_cache: true
+
+    - name: Enable and start MongoDB
+      systemd:
+        name: mongod
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Create tripplanner group
+      group:
+        name: "{{ app_group }}"
+        state: present
+
+    - name: Create tripplanner user
+      user:
+        name: "{{ app_user }}"
+        group: "{{ app_group }}"
+        home: "{{ app_dir }}"
+        shell: /bin/bash
+        create_home: false
+        system: true
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "0755"
+
+    - name: Create env file for application
+      copy:
+        dest: "{{ app_dir }}/env"
+        content: |
+          SPRING_DATA_MONGODB_URI={{ mongodb_uri }}
+          SPRING_DATA_MONGODB_DATABASE={{ mongodb_database }}
+          TELEGRAM_BOT_TOKEN={{ telegram_bot_token | default('') }}
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "0600"
+
+    - name: Deploy systemd tripplanner service
+      copy:
+        dest: /etc/systemd/system/tripplanner.service
+        content: |
+          [Unit]
+          Description=TripPlanner Telegram Bot
+          After=network-online.target mongodb.service
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          Group={{ app_group }}
+          WorkingDirectory={{ app_dir }}
+
+          EnvironmentFile=-{{ app_dir }}/env
+
+          ExecStart=/usr/bin/java -Xmx512m -Dfile.encoding=UTF-8 -jar {{ app_dir }}/app.jar
+          SuccessExitStatus=143
+          Restart=always
+          RestartSec=5
+          TimeoutStartSec=120
+
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=tripplanner
+
+          StartLimitIntervalSec=300
+          StartLimitBurst=5
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: Wait for MongoDB to be ready
+      wait_for:
+        host: 127.0.0.1
+        port: 27017
+        delay: 2
+        timeout: 60
