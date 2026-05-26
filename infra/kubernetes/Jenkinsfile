@@ -5,7 +5,7 @@ pipeline {
         TELEGRAM_TOKEN = credentials('telegram-bot-token')
         MONGO_URI = credentials('mongo-uri-k8s')
         DOCKER_IMAGE = 'docker.io/altorazero/tripplanner'
-        IMAGE_TAG = env.BUILD_NUMBER ?: 'latest'
+        IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
         K8S_NAMESPACE = 'tripplanner'
         // PATH -- не нужно переопределять на Windows
         // DOCKER_HOST -- скорее всего не нужно, если работает Docker Desktop
@@ -24,7 +24,6 @@ pipeline {
 
                         docker buildx build --platform linux/amd64 --load `
                           -t $env:DOCKER_IMAGE`:$env:IMAGE_TAG `
-                          -t $env:DOCKER_IMAGE`:latest .   # можно оставить latest как fallback
                     '''
                 }
             }
@@ -33,9 +32,9 @@ pipeline {
         stage('Push') {
             steps {
                 powershell '''
-                    Write-Host "Pushing ${env:DOCKER_IMAGE}:${env:IMAGE_TAG} and latest"
+                    Write-Host "Pushing ${env:DOCKER_IMAGE}:${env:IMAGE_TAG}"
+                    
                     docker push $env:DOCKER_IMAGE`:$env:IMAGE_TAG
-                    docker push $env:DOCKER_IMAGE`:latest
                 '''    
             }
         }
@@ -86,6 +85,9 @@ pipeline {
                         
                         # Render deployment с правильным тегом
                         $deployYaml = Get-Content k8s/tripplanner-deployment.yaml -Raw
+                        Write-Host "DOCKER_IMAGE = '$env:DOCKER_IMAGE'"
+                        Write-Host "IMAGE_TAG   = '$env:IMAGE_TAG'"
+                        Write-Host "FULL IMAGE  = '$env:DOCKER_IMAGE`:$env:IMAGE_TAG'"
                         $deployYaml = $deployYaml -replace '__APP_IMAGE__', "$env:DOCKER_IMAGE`:$env:IMAGE_TAG"
                         $deployYaml = $deployYaml -replace '__IMAGE_PULL_POLICY__', 'IfNotPresent'
                         $deployYaml | Set-Content k8s/tripplanner-deployment.rendered.yaml
