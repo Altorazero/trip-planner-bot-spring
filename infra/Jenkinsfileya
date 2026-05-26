@@ -24,7 +24,7 @@ pipeline {
         stage('Terraform') {
             steps {
                 withCredentials([
-                    file(credentialsId: params.YC_KEY_ID, variable: 'YC_KEY_FILE')
+                    file(credentialsId: params.YC_KEY_ID, variable: 'YC_KEY_FILE'),
                     string(credentialsId: params.SSH_PUBKEY_ID, variable: 'SSH_PUB_KEY')
                 ]) {
                     dir('infra/terraformya') {
