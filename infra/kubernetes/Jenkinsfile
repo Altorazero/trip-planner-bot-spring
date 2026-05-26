@@ -41,10 +41,6 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    echo "$env:DOCKER_USER"
-                    echo "$env:DOCKER_PASS"
-                    powershell 'whoami'
-                    powershell 'docker info'
                     powershell '''
                         echo $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin
                         docker push $env:DOCKER_IMAGE:$env:IMAGE_TAG
